@@ -32,9 +32,14 @@ EPS = 1e-12
 
 
 def versions():
-    import pennylane, sklearn, scipy
+    import sklearn, scipy
+    try:
+        import pennylane
+        pl_ver = pennylane.__version__
+    except ImportError:
+        pl_ver = "not installed"
     return {"python": platform.python_version(), "numpy": np.__version__,
-            "torch": torch.__version__, "pennylane": pennylane.__version__,
+            "torch": torch.__version__, "pennylane": pl_ver,
             "scikit-learn": sklearn.__version__, "scipy": scipy.__version__,
             "platform": platform.platform()}
 
@@ -70,6 +75,24 @@ def bce(p, y):
 
 def sigmoid(z):
     return 1.0 / (1.0 + np.exp(-z))
+
+
+class MaskedSGD:
+    """Vanilla Stochastic Gradient Descent (SGD) in which only the currently trainable
+    entries are updated.
+
+    Unlike Adam, it does not normalize gradients by their second moment, so if gradients
+    vanish exponentially (e.g. on a barren plateau), the updates vanish exponentially
+    as well, directly exposing the plateau.
+    """
+
+    def __init__(self, shapes=None, lr=0.03):
+        self.lr = lr
+
+    def step(self, params, grads, masks):
+        for p, g, mk in zip(params, grads, masks):
+            mk = np.asarray(mk, dtype=bool)
+            p[mk] -= self.lr * g[mk]
 
 
 class MaskedAdam:
@@ -160,7 +183,13 @@ def train_run(cfg: dict) -> dict:
     stages = schedule(cfg["method"], L, cfg["updates_per_stage"])
     model = Model(n, L, cfg["cost"],
                   init_weights(cfg["method"], L, n, cfg["seed"], cfg["init_range"], cfg["ident_range"]))
-    opt = MaskedAdam([model.w.shape, (1,), (1,)], cfg["lr"])
+    opt_name = cfg.get("optimizer", "sgd")
+    if opt_name == "adam":
+        opt = MaskedAdam([model.w.shape, (1,), (1,)], cfg["lr"])
+    elif opt_name in ("sgd", "gd", "vanilla_sgd"):
+        opt = MaskedSGD([model.w.shape, (1,), (1,)], cfg["lr"])
+    else:
+        raise ValueError(f"Unknown optimizer: {opt_name}")
     mode = cfg.get("mode", "analytic")
     batch_rng = np.random.default_rng([cfg["seed"], 3])
     shot_rng = np.random.default_rng([cfg["seed"], 4, int(cfg.get("shots") or 0)])

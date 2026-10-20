@@ -20,7 +20,9 @@ def make_cfg(experiment, method, seed, shots=None):
 
 
 def run_path(experiment, cfg) -> Path:
-    return C.RESULTS / "runs" / experiment / cfg["method"] / f"seed_{cfg['seed']:03d}.json"
+    opt = cfg.get("optimizer", "adam")
+    folder = "runs" if opt == "adam" else f"runs_{opt}"
+    return C.RESULTS / folder / experiment / cfg["method"] / f"seed_{cfg['seed']:03d}.json"
 
 
 def is_done(path: Path) -> bool:

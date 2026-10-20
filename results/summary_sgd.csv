@@ -1,0 +1,3 @@
+setting,method,runs,mean_test_acc,ci95_test_acc,mean_final_train_loss,successful_runs,success_rate_pct,runs_reaching_90pct,median_iters_to_90pct
+noiseless,direct,5,0.7115,0.0504,0.6784,0,0.0,0,
+noiseless,ll,5,0.566,0.0125,0.6826,0,0.0,0,

@@ -12,9 +12,10 @@ TASK = dict(n_qubits=10, n_layers=16, digits=(4, 9), cost="local")
 DATA = dict(n_train=600, n_val=200, n_test=400)
 
 TRAIN = dict(
+    optimizer="sgd",        # "sgd" (Vanilla Gradient Descent) or "adam"
     batch_size=16,          # images per update
     updates_per_stage=20,   # LL adds a layer every 20 updates -> 16 x 20 = 320 updates
-    lr=0.03,                # Adam learning rate (chosen on validation data in a pilot sweep: 0.01 / 0.03 / 0.1)
+    lr=0.03,                # Learning rate
     init_range=3.141592653589793,   # Direct: every angle ~ U(-pi, pi)
     ident_range=0.1,        # LL: added layers start near identity, angles ~ U(-0.1, 0.1)
 )

@@ -50,6 +50,26 @@ def load_all():
     return {(s, m): load_runs(s, m) for s in SETTINGS for m in METHODS}
 
 
+def load_runs_sgd(setting, method):
+    folder = C.RESULTS / "runs_sgd" / setting / method
+    if not folder.exists():
+        return []
+    files = sorted(folder.glob("seed_*.json"))
+    return [json.loads(f.read_text()) for f in files]
+
+
+def load_all_sgd():
+    res = {}
+    for s in SETTINGS:
+        for m in METHODS:
+            p = C.RESULTS / "runs_sgd" / s / m
+            if p.exists():
+                r = load_runs_sgd(s, m)
+                if r:
+                    res[(s, m)] = r
+    return res
+
+
 def ci95(a):
     a = np.asarray(a, float)
     return 1.96 * a.std(ddof=1) / np.sqrt(len(a))
@@ -302,6 +322,128 @@ def fig_iterations(rows, path):
     plt.close(fig)
 
 
+def fig_curves_sgd(runs, path):
+    settings_present = [s for s in SETTINGS if any((s, m) in runs and len(runs[(s, m)]) > 0 for m in METHODS)]
+    if not settings_present:
+        return
+    fig, axes = plt.subplots(1, len(settings_present), figsize=(5.5 * len(settings_present), 4.4), sharey=True)
+    if len(settings_present) == 1:
+        axes = [axes]
+    for ax, s in zip(axes, settings_present):
+        for m in METHODS:
+            if (s, m) not in runs or len(runs[(s, m)]) == 0:
+                continue
+            A = np.array([r["history"]["test_acc"] for r in runs[(s, m)]])
+            it = np.array(runs[(s, m)][0]["history"]["iter"])
+            mu = A.mean(0)
+            ci = 1.96 * A.std(0, ddof=1) / np.sqrt(len(A)) if len(A) > 1 else np.zeros_like(mu)
+            ax.plot(it, mu, color=COLOR[m], lw=2, label=METHODS[m])
+            if len(A) > 1 and ci.max() > 0:
+                ax.fill_between(it, mu - ci, mu + ci, color=COLOR[m], alpha=0.18, lw=0)
+        ax.axhline(C.ACC_TARGET, color=MUTED, lw=1, ls="--")
+        ax.text(4, C.ACC_TARGET + 0.008, "90% target", ha="left", va="bottom", fontsize=9, color=MUTED)
+        ax.set_title(f"{SETTINGS[s].replace(chr(10), ' ')}\n(Vanilla Gradient Descent)")
+        ax.set_xlabel("training update")
+        ax.set_xlim(0, 320)
+        ax.set_xticks(range(0, 321, 80))
+    axes[0].set_ylabel("test accuracy")
+    axes[0].set_ylim(0.35, 1.0)
+    axes[0].legend(loc="lower right")
+    fig.suptitle("Vanilla SGD: Test accuracy during training (shaded = 95% CI)", y=1.02)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def fig_final_accuracy_sgd(rows, path):
+    if not rows:
+        return
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    settings_present = list(dict.fromkeys(r["setting"] for r in rows))
+    w = 0.36
+    for i, m in enumerate(METHODS):
+        vals = [next((r["mean_test_acc"] for r in rows if r["setting"] == s and r["method"] == m), 0) for s in settings_present]
+        errs = [next((r["ci95_test_acc"] for r in rows if r["setting"] == s and r["method"] == m), 0) for s in settings_present]
+        xs = np.arange(len(settings_present)) + (i - 0.5) * w
+        ax.bar(xs, vals, w * 0.92, color=COLOR[m], label=METHODS[m], yerr=errs,
+               error_kw=dict(ecolor=INK, capsize=4, lw=1))
+        for xx, v in zip(xs, vals):
+            ax.text(xx, v + 0.02, f"{v:.2f}", ha="center", va="bottom", fontsize=9, color=INK)
+    ax.set_xticks(range(len(settings_present)))
+    ax.set_xticklabels([SETTINGS[s].replace("\n", " ") for s in settings_present])
+    ax.set_ylim(0, 1.08)
+    ax.set_ylabel("final test accuracy")
+    ax.set_title("Vanilla SGD: Final test accuracy after 320 updates")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=2)
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def fig_comparison_adam_vs_sgd(runs_adam, runs_sgd, path):
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    s = "noiseless"
+    it = np.array(runs_adam[(s, "direct")][0]["history"]["iter"])
+
+    # Panel 1: Adam
+    ax1 = axes[0]
+    for m in METHODS:
+        if (s, m) in runs_adam:
+            A = np.array([r["history"]["test_acc"] for r in runs_adam[(s, m)]])
+            mu, ci = A.mean(0), 1.96 * A.std(0, ddof=1) / np.sqrt(len(A))
+            ax1.plot(it, mu, color=COLOR[m], lw=2.2, label=f"{METHODS[m]} (Adam)")
+            ax1.fill_between(it, mu - ci, mu + ci, color=COLOR[m], alpha=0.15, lw=0)
+    ax1.axhline(C.ACC_TARGET, color=MUTED, lw=1, ls="--")
+    ax1.text(4, C.ACC_TARGET + 0.008, "90% target", ha="left", va="bottom", fontsize=9, color=MUTED)
+    ax1.set_title("(a) Adam Optimizer\nDirect overcomes flat landscape via adaptive step", fontsize=11, fontweight="bold")
+    ax1.set_xlabel("training update")
+    ax1.set_ylabel("test accuracy")
+    ax1.set_xlim(0, 320)
+    ax1.set_ylim(0.35, 1.0)
+    ax1.legend(loc="lower right")
+
+    # Panel 2: Vanilla SGD
+    ax2 = axes[1]
+    for m in METHODS:
+        if (s, m) in runs_sgd:
+            A = np.array([r["history"]["test_acc"] for r in runs_sgd[(s, m)]])
+            it_sgd = np.array(runs_sgd[(s, m)][0]["history"]["iter"])
+            mu = A.mean(0)
+            ci = 1.96 * A.std(0, ddof=1) / np.sqrt(len(A)) if len(A) > 1 else np.zeros_like(mu)
+            ax2.plot(it_sgd, mu, color=COLOR[m], lw=2.2, label=f"{METHODS[m]} (Vanilla SGD)")
+            if len(A) > 1 and ci.max() > 0:
+                ax2.fill_between(it_sgd, mu - ci, mu + ci, color=COLOR[m], alpha=0.15, lw=0)
+    ax2.axhline(C.ACC_TARGET, color=MUTED, lw=1, ls="--")
+    ax2.text(4, C.ACC_TARGET + 0.008, "90% target", ha="left", va="bottom", fontsize=9, color=MUTED)
+    ax2.set_title("(b) Vanilla Gradient Descent (SGD)\nBarren Plateau halts training: Direct gets trapped flat", fontsize=11, fontweight="bold")
+    ax2.set_xlabel("training update")
+    ax2.set_ylabel("test accuracy")
+    ax2.set_xlim(0, 320)
+    ax2.set_ylim(0.35, 1.0)
+    ax2.legend(loc="lower right")
+
+    fig.suptitle("Barren Plateau Evidence: Adam vs Vanilla Gradient Descent (Noiseless)", fontsize=13, fontweight="bold", y=1.03)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def make_sgd_figures(log=print):
+    C.FIGURES.mkdir(exist_ok=True)
+    runs_sgd = load_all_sgd()
+    if not runs_sgd:
+        log("No SGD runs found in results/runs_sgd, skipping SGD figures.")
+        return
+    rows_sgd = summarize(runs_sgd)
+    write_summary(rows_sgd, C.RESULTS / "summary_sgd.csv")
+    log(f"wrote {C.RESULTS / 'summary_sgd.csv'}")
+    F = C.FIGURES
+    fig_curves_sgd(runs_sgd, F / "fig4_sgd_test_accuracy_curves.png")
+    fig_final_accuracy_sgd(rows_sgd, F / "fig5_sgd_final_accuracy.png")
+    runs_adam = load_all()
+    fig_comparison_adam_vs_sgd(runs_adam, runs_sgd, F / "fig8_adam_vs_sgd_comparison.png")
+    log(f"New SGD figures and comparison added to {F} without replacing existing figures.")
+
+
 def make_all(log=print):
     C.FIGURES.mkdir(exist_ok=True)
     runs = load_all()
@@ -315,5 +457,6 @@ def make_all(log=print):
     fig_final_accuracy(rows, F / "fig5_final_accuracy.png")
     fig_success(rows, F / "fig6_success_rate.png")
     fig_iterations(rows, F / "fig7_iterations_to_converge.png")
-    log(f"figures written to {F}")
+    log(f"original figures preserved in {F}")
+    make_sgd_figures(log)
     return rows
